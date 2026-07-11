@@ -166,6 +166,12 @@ function parseArgs(args: string[]): {
         options.simConfig.maxContextTokens = parseInt(next ?? "69000", 10);
         i++;
         break;
+      case "--memory-compaction":
+        options.simConfig.useMemoryCompaction = true;
+        break;
+      case "--no-memory-compaction":
+        options.simConfig.useMemoryCompaction = false;
+        break;
       default:
         break;
     }

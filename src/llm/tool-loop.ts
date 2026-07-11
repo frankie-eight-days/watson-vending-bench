@@ -15,12 +15,13 @@ import { getToolByName, getOpenAiToolDefs } from "../tools/index.js";
 import {
   createProviderMessage,
   resolvePrimaryProviderConfig,
+  resolveSupplierProviderConfig,
   toAnthropicTools,
   toAnthropicMessages,
   type ChatMessage,
   type ProviderResponse,
 } from "./client.js";
-import { trimMessages } from "./context.js";
+import { trimMessages, compactMessages } from "./context.js";
 
 export interface ToolLoopResult {
   /** Whether wait_for_next_day was called */
@@ -43,6 +44,9 @@ export async function runToolLoop(
   costTracker?: CostTracker,
 ): Promise<ToolLoopResult> {
   const providerConfig = resolvePrimaryProviderConfig(config);
+  // Pitch A: a cheap summarizer for memory compaction (reuse the supplier model,
+  // which is the same small gpt-5.6-luna in the demo profile).
+  const summarizerConfig = resolveSupplierProviderConfig(config);
   const oaiToolDefs = getOpenAiToolDefs();
   const anthropicTools = toAnthropicTools(oaiToolDefs);
   let llmCalls = 0;
@@ -58,8 +62,12 @@ export async function runToolLoop(
       break;
     }
 
-    // Trim messages to fit context window
-    const trimmedMessages = trimMessages(messages, config.maxContextTokens);
+    // Fit the context window. With memory compaction on (Pitch A), overflow is
+    // summarized into a pinned [MEMORY] note (mutating `messages` in place) so
+    // durable facts survive the horizon; otherwise fall back to lossy trimming.
+    const trimmedMessages = config.useMemoryCompaction
+      ? await compactMessages(messages, config.maxContextTokens, summarizerConfig, costTracker)
+      : trimMessages(messages, config.maxContextTokens);
 
     // Convert to Anthropic format
     const { system, messages: anthropicMessages } =
