@@ -48,6 +48,13 @@ export interface SimulationConfig {
   /** Seed for deterministic event randomness */
   eventSeed: number;
 
+  /**
+   * When true, context overflow summarizes evicted history into a pinned
+   * `[MEMORY]` note (Pitch A: MemGPT-style compaction) instead of the lossy
+   * sliding-window drop. Defaults false to preserve baseline behaviour.
+   */
+  useMemoryCompaction: boolean;
+
   /** Anthropic API key (from env if not set) */
   apiKey?: string;
 }
@@ -64,6 +71,7 @@ export const DEFAULT_CONFIG: SimulationConfig = {
   useLlmSuppliers: true,
   eventTemperature: 0.5,
   eventSeed: 42,
+  useMemoryCompaction: false,
 };
 
 function resolveApiKey(provider: "anthropic" | "cerebras" | "openai"): string | undefined {
@@ -122,6 +130,11 @@ export function resolveConfig(
       (process.env["VENDING_BENCH_USE_LLM_SUPPLIERS"] === undefined
         ? DEFAULT_CONFIG.useLlmSuppliers
         : process.env["VENDING_BENCH_USE_LLM_SUPPLIERS"] === "true"),
+    useMemoryCompaction:
+      overrides.useMemoryCompaction ??
+      (process.env["VENDING_BENCH_MEMORY_COMPACTION"] === undefined
+        ? DEFAULT_CONFIG.useMemoryCompaction
+        : process.env["VENDING_BENCH_MEMORY_COMPACTION"] === "true"),
     apiKey: overrides.apiKey ?? resolveApiKey(provider),
   };
 }
