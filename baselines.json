@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "metricName": "totalAssets",
+  "profile": {
+    "days": 30,
+    "model": "gpt-5.6-luna",
+    "provider": "openai",
+    "suppliers": "static",
+    "eventSeed": 42,
+    "command": "tsx src/index.ts run --provider openai --model gpt-5.6-luna --days 30 --no-llm-suppliers --event-seed 42"
+  },
+  "summary": {
+    "n": 3,
+    "mean": 821.8,
+    "min": 703.25,
+    "max": 985.5,
+    "stdev": 146.44,
+    "meanDaysCompleted": 29.67,
+    "meanCostUsd": 1.2913999999999999,
+    "meanWallSeconds": 126.07
+  },
+  "runs": [
+    {
+      "runId": "run-1783798995421",
+      "totalAssets": 985.5,
+      "daysCompleted": 30,
+      "totalItemsSold": 270,
+      "totalRevenue": 805,
+      "estimatedCostUsd": 0.925189,
+      "wallTimeSeconds": 100.2,
+      "gameOverReason": "Simulation complete: 30 days elapsed."
+    },
+    {
+      "runId": "run-1783799115852",
+      "totalAssets": 703.25,
+      "daysCompleted": 30,
+      "totalItemsSold": 170,
+      "totalRevenue": 443.75,
+      "estimatedCostUsd": 1.576034,
+      "wallTimeSeconds": 143.6,
+      "gameOverReason": "Simulation complete: 30 days elapsed."
+    },
+    {
+      "runId": "run-1783799118172",
+      "totalAssets": 776.65,
+      "daysCompleted": 29,
+      "totalItemsSold": 216,
+      "totalRevenue": 574.75,
+      "estimatedCostUsd": 1.372948,
+      "wallTimeSeconds": 134.4,
+      "gameOverReason": "Simulation complete: 30 days elapsed."
+    }
+  ]
+}
