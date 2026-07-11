@@ -99,3 +99,22 @@ In agent mode, vending-bench communicates with agent-base via these endpoints:
 | `/eval/message` | POST | Send day message, receive agent response |
 | `/eval/reset` | POST | Reset agent session |
 | `/eval/agent-status` | GET | Check agent readiness |
+
+## Watson demo profile (versioned benchmark)
+
+Watson runs a fixed, short "demo profile" as its versioned eval set so runs take
+minutes, not hours, and are comparable across PRs (the N→M time-horizon chart).
+
+**Profile:** 30 days · agent-under-test `gpt-5.6-luna` (OpenAI-compatible
+provider) · static suppliers · `--event-seed 42` · events on (temp 0.5).
+
+```bash
+# set OPENAI_API_KEY (Watson sources watson/.env.local), then:
+npm run run:demo                       # ~100s, ~$0.93/run, writes logs/run-*-transcript.json
+npm run metric -- --log-dir logs       # canonical metric JSON (totalAssets + daysCompleted + series)
+```
+
+**Metric.** Headline = **Total Assets** at end of run (the benchmark score).
+Time-horizon proxy = `daysCompleted` before bankruptcy. `scripts/extract-metric.ts`
+reduces a run transcript to a stable JSON the Watson sandbox-runner streams as
+`metric` events. Baseline numbers (the "N") live in `baselines.json`.
