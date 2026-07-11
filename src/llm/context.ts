@@ -9,6 +9,37 @@
 import type { ChatMessage } from "./client.js";
 
 const CHARS_PER_TOKEN = 4;
+const DURABLE_MEMORY_PREFIX = "[[vending-bench-durable-memory]]";
+const MEMORY_NAMESPACE = "vending-bench:durable-memory";
+const MEMORY_FIELDS = [
+  "decisions",
+  "inventoryPricingPolicy",
+  "debts",
+  "recurringObligations",
+  "unresolvedTasks",
+  "recentOutcomes",
+] as const;
+const MAX_MEMORY_ITEMS_PER_FIELD = 2;
+const MAX_MEMORY_ITEM_CHARS = 80;
+
+type MemoryField = (typeof MEMORY_FIELDS)[number];
+
+interface DurableMemory {
+  version: 1;
+  decisions: string[];
+  inventoryPricingPolicy: string[];
+  debts: string[];
+  recurringObligations: string[];
+  unresolvedTasks: string[];
+  recentOutcomes: string[];
+}
+
+interface CompactionWorld {
+  scratchpad?: unknown;
+  kv?: {
+    set?: (key: string, value: string) => unknown;
+  };
+}
 
 /**
  * Estimate token count for a message.
@@ -35,33 +66,279 @@ export function estimateTotalTokens(messages: ChatMessage[]): number {
   return messages.reduce((sum, m) => sum + estimateTokens(m), 0);
 }
 
+function emptyDurableMemory(): DurableMemory {
+  return {
+    version: 1,
+    decisions: [],
+    inventoryPricingPolicy: [],
+    debts: [],
+    recurringObligations: [],
+    unresolvedTasks: [],
+    recentOutcomes: [],
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeMemoryItems(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const items: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string") {
+      continue;
+    }
+    const normalized = item.replace(/\s+/g, " ").trim();
+    if (
+      normalized &&
+      !items.includes(normalized) &&
+      items.length < MAX_MEMORY_ITEMS_PER_FIELD
+    ) {
+      items.push(normalized.slice(0, MAX_MEMORY_ITEM_CHARS));
+    }
+  }
+  return items;
+}
+
+function parseDurableMemory(value: unknown): DurableMemory | undefined {
+  let candidate = value;
+
+  if (typeof candidate === "string") {
+    try {
+      candidate = JSON.parse(candidate);
+    } catch {
+      return undefined;
+    }
+  }
+
+  if (!isRecord(candidate)) {
+    return undefined;
+  }
+
+  const memory = emptyDurableMemory();
+  for (const field of MEMORY_FIELDS) {
+    memory[field] = normalizeMemoryItems(candidate[field]);
+  }
+
+  return memory;
+}
+
+function readDurableMemory(
+  messages: ChatMessage[],
+  world?: CompactionWorld,
+): DurableMemory | undefined {
+  if (world?.scratchpad !== undefined) {
+    const scratchpad = world.scratchpad;
+    if (isRecord(scratchpad) && scratchpad.durableMemory !== undefined) {
+      const memory = parseDurableMemory(scratchpad.durableMemory);
+      if (memory) {
+        return memory;
+      }
+    }
+
+    const memory = parseDurableMemory(scratchpad);
+    if (memory) {
+      return memory;
+    }
+  }
+
+  for (const message of messages) {
+    if (
+      message.role === "system" &&
+      typeof message.content === "string" &&
+      message.content.startsWith(DURABLE_MEMORY_PREFIX)
+    ) {
+      const memory = parseDurableMemory(
+        message.content.slice(DURABLE_MEMORY_PREFIX.length).trim(),
+      );
+      if (memory) {
+        return memory;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function isDurableMemoryMessage(message: ChatMessage): boolean {
+  return (
+    message.role === "system" &&
+    typeof message.content === "string" &&
+    message.content.startsWith(DURABLE_MEMORY_PREFIX)
+  );
+}
+
+function addMemoryItem(
+  memory: DurableMemory,
+  field: MemoryField,
+  text: string,
+): void {
+  const normalized = text.replace(/\s+/g, " ").trim().slice(0, MAX_MEMORY_ITEM_CHARS);
+  if (!normalized || memory[field].includes(normalized)) {
+    return;
+  }
+
+  memory[field].push(normalized);
+  if (memory[field].length > MAX_MEMORY_ITEMS_PER_FIELD) {
+    memory[field].shift();
+  }
+}
+
+function compactMemory(
+  previous: DurableMemory | undefined,
+  evictedMessages: ChatMessage[],
+): DurableMemory {
+  const memory = previous
+    ? {
+        version: 1 as const,
+        decisions: [...previous.decisions],
+        inventoryPricingPolicy: [...previous.inventoryPricingPolicy],
+        debts: [...previous.debts],
+        recurringObligations: [...previous.recurringObligations],
+        unresolvedTasks: [...previous.unresolvedTasks],
+        recentOutcomes: [...previous.recentOutcomes],
+      }
+    : emptyDurableMemory();
+
+  for (const message of evictedMessages) {
+    if (typeof message.content !== "string") {
+      continue;
+    }
+
+    const text = message.content.replace(/\s+/g, " ").trim();
+    if (!text) {
+      continue;
+    }
+
+    if (/\b(decid(?:e|ed|ing)|choice|choose|chosen|plan|policy)\b/i.test(text)) {
+      addMemoryItem(memory, "decisions", text);
+    }
+    if (
+      /\b(inventory|stock|restock|sku|price|pricing|margin|discount|cost)\b/i.test(
+        text,
+      )
+    ) {
+      addMemoryItem(memory, "inventoryPricingPolicy", text);
+    }
+    if (/\b(debt|owe[sd]?|loan|creditor|arrears|balance due)\b/i.test(text)) {
+      addMemoryItem(memory, "debts", text);
+    }
+    if (
+      /\b(recurring|monthly|weekly|daily|subscription|rent|payroll|schedule)\b/i.test(
+        text,
+      )
+    ) {
+      addMemoryItem(memory, "recurringObligations", text);
+    }
+    if (
+      /\b(todo|task|pending|unresolved|follow up|follow-up|need to|remaining|blocked)\b/i.test(
+        text,
+      )
+    ) {
+      addMemoryItem(memory, "unresolvedTasks", text);
+    }
+    if (
+      /\b(outcome|sold|sale|revenue|profit|loss|completed|success|failed|result)\b/i.test(
+        text,
+      )
+    ) {
+      addMemoryItem(memory, "recentOutcomes", text);
+    }
+  }
+
+  return memory;
+}
+
+function memoryMessage(memory: DurableMemory): ChatMessage {
+  return {
+    role: "system",
+    content: `${DURABLE_MEMORY_PREFIX}\n${JSON.stringify(memory)}`,
+  };
+}
+
+async function persistDurableMemory(
+  world: CompactionWorld | undefined,
+  memory: DurableMemory,
+): Promise<void> {
+  if (!world) {
+    return;
+  }
+
+  try {
+    if (isRecord(world.scratchpad)) {
+      world.scratchpad = {
+        ...world.scratchpad,
+        durableMemory: memory,
+      };
+    } else {
+      world.scratchpad = { durableMemory: memory };
+    }
+  } catch {
+    // Context compaction must not prevent a model request when persistence fails.
+  }
+
+  if (!world.kv?.set) {
+    return;
+  }
+
+  try {
+    await world.kv.set(`${MEMORY_NAMESPACE}:record`, JSON.stringify(memory));
+    for (const field of MEMORY_FIELDS) {
+      await world.kv.set(
+        `${MEMORY_NAMESPACE}:${field}`,
+        JSON.stringify(memory[field]),
+      );
+    }
+  } catch {
+    // Scratchpad persistence remains available when the optional KV store fails.
+  }
+}
+
 /**
  * Trim messages to fit within the token budget.
- * Always keeps the system message (first) and the most recent messages.
- * Removes the oldest non-system messages first.
+ * Always keeps system messages, the durable memory record, and the most recent
+ * messages. Before older turns are evicted, relevant business state is compacted
+ * into a bounded durable record.
  */
-export function trimMessages(
+export async function trimMessages(
   messages: ChatMessage[],
   maxTokens: number,
-): ChatMessage[] {
-  const totalTokens = estimateTotalTokens(messages);
-  if (totalTokens <= maxTokens) {
-    return messages;
+  world?: CompactionWorld,
+): Promise<ChatMessage[]> {
+  const nonMemoryMessages = messages.filter(
+    (message) => !isDurableMemoryMessage(message),
+  );
+  const existingMemory = readDurableMemory(messages, world);
+  const existingMemoryMessage = existingMemory
+    ? memoryMessage(existingMemory)
+    : undefined;
+  const messagesWithMemory = existingMemoryMessage
+    ? [existingMemoryMessage, ...nonMemoryMessages]
+    : nonMemoryMessages;
+
+  if (estimateTotalTokens(messagesWithMemory) <= maxTokens) {
+    return messagesWithMemory;
   }
 
-  // Separate system message from the rest
-  const systemMessages = messages.filter((m) => m.role === "system");
-  const otherMessages = messages.filter((m) => m.role !== "system");
+  const systemMessages = nonMemoryMessages.filter((m) => m.role === "system");
+  const otherMessages = nonMemoryMessages.filter((m) => m.role !== "system");
 
+  const provisionalMemory = existingMemory ?? emptyDurableMemory();
+  const durableMessage = memoryMessage(provisionalMemory);
   const systemTokens = estimateTotalTokens(systemMessages);
-  const budgetForOther = maxTokens - systemTokens;
+  const memoryTokens = estimateTokens(durableMessage);
+  const budgetForOther = maxTokens - systemTokens - memoryTokens;
 
   if (budgetForOther <= 0) {
-    // System message alone exceeds budget — just return it truncated
-    return systemMessages;
+    return systemTokens <= maxTokens
+      ? [durableMessage, ...systemMessages]
+      : systemMessages;
   }
 
-  // Keep messages from the end until we exceed the budget
   const kept: ChatMessage[] = [];
   let keptTokens = 0;
 
@@ -74,28 +351,17 @@ export function trimMessages(
     keptTokens += msgTokens;
   }
 
-  // Drop orphaned messages at the start of the kept window.
-  // Anthropic requires every tool_result to have a matching tool_use
-  // in the immediately preceding assistant message. If trimming cut
-  // away that assistant message, the tool results cause a 400 error.
-  // Also drop assistant+tool_call messages whose tool results may be
-  // incomplete. We want the window to start with a clean user message.
-  let cleaned = false;
-  while (!cleaned && kept.length > 0) {
+  while (kept.length > 0) {
     const first = kept[0]!;
     if (first.role === "tool") {
-      // Orphaned tool result — its assistant/tool_use was trimmed
       kept.shift();
     } else if (
       first.role === "assistant" &&
       first.tool_calls &&
       first.tool_calls.length > 0
     ) {
-      // Assistant with tool_calls at boundary — tool results may be
-      // incomplete, and this creates a broken tool_use/tool_result pair
       const toolCallIds = new Set(first.tool_calls.map((tc) => tc.id));
       kept.shift();
-      // Also drop any following tool results for these calls
       while (
         kept.length > 0 &&
         kept[0]!.role === "tool" &&
@@ -105,9 +371,16 @@ export function trimMessages(
         kept.shift();
       }
     } else {
-      cleaned = true;
+      break;
     }
   }
 
-  return [...systemMessages, ...kept];
+  const evictedMessages = otherMessages.slice(
+    0,
+    otherMessages.length - kept.length,
+  );
+  const compactedMemory = compactMemory(existingMemory, evictedMessages);
+  await persistDurableMemory(world, compactedMemory);
+
+  return [memoryMessage(compactedMemory), ...systemMessages, ...kept];
 }
