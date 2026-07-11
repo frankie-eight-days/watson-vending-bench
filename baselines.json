@@ -1,54 +1,50 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "metricName": "totalAssets",
+  "note": "Watson sandbox demo profile. The 30-day run rarely overflowed the original 69k context window, so the memory seam was never exercised. The versioned demo profile therefore uses an 8k context window: a genuine long-horizon memory-coherence stress test where lossy sliding-window truncation (baseline) can be compared against summarize-on-evict compaction (candidate, Pitch A). Agent-under-test disclosed on screen.",
   "profile": {
     "days": 30,
     "model": "gpt-5.6-luna",
     "provider": "openai",
+    "reasoningEffort": "none",
     "suppliers": "static",
     "eventSeed": 42,
-    "command": "tsx src/index.ts run --provider openai --model gpt-5.6-luna --days 30 --no-llm-suppliers --event-seed 42"
+    "maxContextTokens": 8000,
+    "command": "npm run run:demo",
+    "commandFull": "tsx src/index.ts run --provider openai --model gpt-5.6-luna --days 30 --no-llm-suppliers --event-seed 42 --max-context 8000"
   },
-  "summary": {
+  "baseline": {
+    "label": "N — lossy sliding-window truncation (main)",
     "n": 3,
-    "mean": 821.8,
-    "min": 703.25,
-    "max": 985.5,
-    "stdev": 146.44,
-    "meanDaysCompleted": 29.67,
-    "meanCostUsd": 1.2913999999999999,
-    "meanWallSeconds": 126.07
+    "meanTotalAssets": 850.99,
+    "minTotalAssets": 826.6,
+    "maxTotalAssets": 885.88,
+    "meanDaysCompleted": 30,
+    "runs": [
+      { "totalAssets": 826.6, "daysCompleted": 30, "estimatedCostUsd": 0.7405, "wallTimeSeconds": 107.8, "compactionEvents": 0 },
+      { "totalAssets": 840.5, "daysCompleted": 30, "estimatedCostUsd": 0.959314, "wallTimeSeconds": 143.4, "compactionEvents": 0 },
+      { "totalAssets": 885.88, "daysCompleted": 30, "estimatedCostUsd": 0.709452, "wallTimeSeconds": 104.5, "compactionEvents": 0 }
+    ]
   },
-  "runs": [
-    {
-      "runId": "run-1783798995421",
-      "totalAssets": 985.5,
-      "daysCompleted": 30,
-      "totalItemsSold": 270,
-      "totalRevenue": 805,
-      "estimatedCostUsd": 0.925189,
-      "wallTimeSeconds": 100.2,
-      "gameOverReason": "Simulation complete: 30 days elapsed."
-    },
-    {
-      "runId": "run-1783799115852",
-      "totalAssets": 703.25,
-      "daysCompleted": 30,
-      "totalItemsSold": 170,
-      "totalRevenue": 443.75,
-      "estimatedCostUsd": 1.576034,
-      "wallTimeSeconds": 143.6,
-      "gameOverReason": "Simulation complete: 30 days elapsed."
-    },
-    {
-      "runId": "run-1783799118172",
-      "totalAssets": 776.65,
-      "daysCompleted": 29,
-      "totalItemsSold": 216,
-      "totalRevenue": 574.75,
-      "estimatedCostUsd": 1.372948,
-      "wallTimeSeconds": 134.4,
-      "gameOverReason": "Simulation complete: 30 days elapsed."
-    }
-  ]
+  "candidate": {
+    "label": "M — memory compaction / summarize-on-evict (feat/memory-compaction, Pitch A)",
+    "ref": "feat/memory-compaction",
+    "n": 3,
+    "meanTotalAssets": 963.47,
+    "minTotalAssets": 801.0,
+    "maxTotalAssets": 1246.4,
+    "meanDaysCompleted": 30,
+    "improvementVsBaselinePct": 13.2,
+    "runs": [
+      { "totalAssets": 843.0, "daysCompleted": 30, "estimatedCostUsd": 0.644903, "wallTimeSeconds": 107.0, "compactionEvents": 5 },
+      { "totalAssets": 801.0, "daysCompleted": 30, "estimatedCostUsd": 0.901666, "wallTimeSeconds": 160.3, "compactionEvents": 9 },
+      { "totalAssets": 1246.4, "daysCompleted": 30, "estimatedCostUsd": 1.436291, "wallTimeSeconds": 265.1, "compactionEvents": 21 }
+    ]
+  },
+  "result": {
+    "headline": "Total Assets: baseline $850.99 -> candidate $963.47 (+13.2%) on the 8k demo profile (n=3 each, seed 42).",
+    "caveat": "High variance in the candidate (min $801 overlaps the baseline range; one strong outlier $1246 with 21 compaction events). Days-completed did not separate: both arms survive all 30 days on this horizon. The gain concentrates in runs where more memory pressure fires more compaction — consistent with the hypothesis that preserving evicted facts helps most exactly when truncation would otherwise lose them.",
+    "priorProfileBaselineMean": 821.8,
+    "priorProfile": "30d / 69k context (memory seam not exercised)"
+  }
 }

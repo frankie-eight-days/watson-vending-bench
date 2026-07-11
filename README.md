@@ -105,14 +105,26 @@ In agent mode, vending-bench communicates with agent-base via these endpoints:
 Watson runs a fixed, short "demo profile" as its versioned eval set so runs take
 minutes, not hours, and are comparable across PRs (the N→M time-horizon chart).
 
-**Profile:** 30 days · agent-under-test `gpt-5.6-luna` (OpenAI-compatible
-provider) · static suppliers · `--event-seed 42` · events on (temp 0.5).
+**Profile (locked, versioned):** 30 days · agent-under-test `gpt-5.6-luna`
+(OpenAI-compatible provider, `reasoning_effort: none` — disclosed on screen) ·
+static suppliers · `--event-seed 42` · **`--max-context 8000`**.
+
+The 8k context window is deliberate: at the original 69k window a 30-day run
+rarely overflowed, so the truncation/memory seam was never exercised. 8k makes
+the demo a genuine long-horizon **memory-coherence stress test**, so lossy
+sliding-window truncation (baseline, `main`) can be compared against
+summarize-on-evict compaction (candidate, `feat/memory-compaction`, Pitch A).
 
 ```bash
 # set OPENAI_API_KEY (Watson sources watson/.env.local), then:
-npm run run:demo                       # ~100s, ~$0.93/run, writes logs/run-*-transcript.json
+npm run run:demo                       # ~110s, ~$0.7-1.4/run, writes logs/run-*-transcript.json
 npm run metric -- --log-dir logs       # canonical metric JSON (totalAssets + daysCompleted + series)
 ```
+
+**Result (n=3 each, seed 42):** Total Assets baseline **$850.99 → candidate
+$963.47 (+13.2%)**. Both arms survive all 30 days (no bankruptcy separation on
+this horizon); the gain concentrates in runs with more memory pressure / more
+compaction events. See `baselines.json` for per-run numbers and caveats.
 
 **Metric.** Headline = **Total Assets** at end of run (the benchmark score).
 Time-horizon proxy = `daysCompleted` before bankruptcy. `scripts/extract-metric.ts`
