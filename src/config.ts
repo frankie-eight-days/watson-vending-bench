@@ -7,19 +7,19 @@ export interface SimulationConfig {
   mode: "direct" | "openclaw" | "agent";
 
   /** LLM provider for the primary agent (used in direct/openclaw modes) */
-  provider: "anthropic" | "cerebras";
+  provider: "anthropic" | "cerebras" | "openai";
 
   /** LLM model for the agent */
   model: string;
 
   /** LLM provider for supplier email responses (defaults to provider if not set) */
-  supplierProvider?: "anthropic" | "cerebras";
+  supplierProvider?: "anthropic" | "cerebras" | "openai";
 
   /** LLM model for supplier email responses (defaults to model if not set) */
   supplierModel?: string;
 
   /** LLM provider for search-intent classification when Brave search is enabled */
-  searchProvider?: "anthropic" | "cerebras";
+  searchProvider?: "anthropic" | "cerebras" | "openai";
 
   /** LLM model for search-intent classification */
   searchModel?: string;
@@ -66,9 +66,12 @@ export const DEFAULT_CONFIG: SimulationConfig = {
   eventSeed: 42,
 };
 
-function resolveApiKey(provider: "anthropic" | "cerebras"): string | undefined {
+function resolveApiKey(provider: "anthropic" | "cerebras" | "openai"): string | undefined {
   if (provider === "cerebras") {
     return process.env["CEREBRAS_API_KEY"] ?? undefined;
+  }
+  if (provider === "openai") {
+    return process.env["OPENAI_API_KEY"] ?? undefined;
   }
   return (
     process.env["ANTHROPIC_API_KEY"] ??
@@ -82,15 +85,15 @@ export function resolveConfig(
 ): SimulationConfig {
   const provider =
     overrides.provider ??
-    ((process.env["VENDING_BENCH_PROVIDER"] as "anthropic" | "cerebras" | undefined) ??
+    ((process.env["VENDING_BENCH_PROVIDER"] as "anthropic" | "cerebras" | "openai" | undefined) ??
       DEFAULT_CONFIG.provider);
   const supplierProvider =
     overrides.supplierProvider ??
-    ((process.env["VENDING_BENCH_SUPPLIER_PROVIDER"] as "anthropic" | "cerebras" | undefined) ??
+    ((process.env["VENDING_BENCH_SUPPLIER_PROVIDER"] as "anthropic" | "cerebras" | "openai" | undefined) ??
       provider);
   const searchProvider =
     overrides.searchProvider ??
-    ((process.env["VENDING_BENCH_SEARCH_PROVIDER"] as "anthropic" | "cerebras" | undefined) ??
+    ((process.env["VENDING_BENCH_SEARCH_PROVIDER"] as "anthropic" | "cerebras" | "openai" | undefined) ??
       supplierProvider);
 
   return {

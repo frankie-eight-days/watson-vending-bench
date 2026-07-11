@@ -13,6 +13,9 @@ const PRICING: Record<string, { input: number; output: number }> = {
   "claude-opus-4-6":     { input: 15.00, output: 75.00 },
   "claude-sonnet-4-6":   { input: 3.00,  output: 15.00 },
   "claude-haiku-4-5-20251001": { input: 0.80, output: 4.00 },
+  // OpenAI GPT-5.6 family (agents-under-test for Watson)
+  "gpt-5.6-terra":       { input: 2.50,  output: 15.00 },
+  "gpt-5.6-luna":        { input: 1.00,  output: 6.00 },
   // Fallback for unknown models
   default:               { input: 3.00,  output: 15.00 },
 };

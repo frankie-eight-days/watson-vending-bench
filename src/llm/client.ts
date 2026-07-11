@@ -1,7 +1,21 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { SimulationConfig } from "../config.js";
 
-export type SupportedProvider = "anthropic" | "cerebras";
+export type SupportedProvider = "anthropic" | "cerebras" | "openai";
+
+/**
+ * Base URL for OpenAI-compatible chat/completions providers.
+ * `cerebras` targets the Cerebras cloud; `openai` targets the OpenAI API (or an
+ * OpenAI-compatible gateway via OPENAI_BASE_URL) and is how Watson runs the
+ * `gpt-5.6-terra` / `gpt-5.6-luna` agents-under-test.
+ */
+function openAiCompatibleBaseUrl(provider: SupportedProvider): string {
+  if (provider === "cerebras") {
+    return "https://api.cerebras.ai/v1";
+  }
+  const base = process.env["OPENAI_BASE_URL"]?.trim();
+  return (base && base.length > 0 ? base : "https://api.openai.com/v1").replace(/\/+$/, "");
+}
 
 const anthropicClients = new Map<string, Anthropic>();
 
@@ -99,6 +113,9 @@ export function resolveProviderApiKey(provider: SupportedProvider): string | und
   if (provider === "cerebras") {
     return process.env["CEREBRAS_API_KEY"] ?? undefined;
   }
+  if (provider === "openai") {
+    return process.env["OPENAI_API_KEY"] ?? undefined;
+  }
   return process.env["ANTHROPIC_API_KEY"] ?? process.env["CLAUDE_API_KEY"] ?? undefined;
 }
 
@@ -134,7 +151,11 @@ export function resolveSearchProviderConfig(config?: Partial<SimulationConfig>):
     config?.model ??
     process.env["VENDING_BENCH_SUPPLIER_MODEL"] ??
     process.env["VENDING_BENCH_MODEL"] ??
-    (provider === "cerebras" ? "zai-glm-4.7" : "claude-haiku-4-5-20251001");
+    (provider === "cerebras"
+      ? "zai-glm-4.7"
+      : provider === "openai"
+        ? "gpt-5.6-luna"
+        : "claude-haiku-4-5-20251001");
   return resolveProviderConfig({
     provider,
     model,
@@ -257,8 +278,11 @@ export async function createProviderMessage(params: {
   maxTokens: number;
   temperature?: number;
 }): Promise<ProviderResponse> {
-  if (params.providerConfig.provider === "cerebras") {
-    return createCerebrasMessage(params);
+  if (
+    params.providerConfig.provider === "cerebras" ||
+    params.providerConfig.provider === "openai"
+  ) {
+    return createOpenAiCompatibleMessage(params);
   }
   return createAnthropicMessage(params);
 }
@@ -293,7 +317,7 @@ async function createAnthropicMessage(params: {
   };
 }
 
-async function createCerebrasMessage(params: {
+async function createOpenAiCompatibleMessage(params: {
   providerConfig: ProviderConfig;
   system?: string;
   messages: Anthropic.MessageParam[];
@@ -301,6 +325,26 @@ async function createCerebrasMessage(params: {
   maxTokens: number;
   temperature?: number;
 }): Promise<ProviderResponse> {
+  const provider = params.providerConfig.provider;
+  const isOpenAi = provider === "openai";
+
+  // GPT-5.x family (served over the OpenAI API) uses `max_completion_tokens`
+  // rather than `max_tokens`, and rejects non-default `temperature`. Cerebras
+  // uses the classic `max_tokens` field and accepts `temperature`.
+  const tokenLimitField = isOpenAi
+    ? { max_completion_tokens: params.maxTokens }
+    : { max_tokens: params.maxTokens };
+  const temperatureField =
+    !isOpenAi && typeof params.temperature === "number"
+      ? { temperature: params.temperature }
+      : {};
+
+  // GPT-5.6 reasoning models reject function tools on /v1/chat/completions
+  // unless reasoning is disabled ("Function tools with reasoning_effort are not
+  // supported ... set reasoning_effort to 'none'"). Running the agent-under-test
+  // without reasoning also keeps luna fast + cheap, which is what we want here.
+  const reasoningField = isOpenAi ? { reasoning_effort: "none" } : {};
+
   const payload = {
     model: params.providerConfig.model,
     messages: toCerebrasMessages(params.system, params.messages),
@@ -312,11 +356,12 @@ async function createCerebrasMessage(params: {
         parameters: tool.input_schema,
       },
     })),
-    max_tokens: params.maxTokens,
-    ...(typeof params.temperature === "number" ? { temperature: params.temperature } : {}),
+    ...tokenLimitField,
+    ...temperatureField,
+    ...reasoningField,
   };
 
-  const res = await fetch("https://api.cerebras.ai/v1/chat/completions", {
+  const res = await fetch(`${openAiCompatibleBaseUrl(provider)}/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -327,7 +372,7 @@ async function createCerebrasMessage(params: {
 
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`Cerebras API error ${res.status}: ${body}`);
+    throw new Error(`${provider} API error ${res.status}: ${body}`);
   }
 
   const json = await res.json() as CerebrasResponse;

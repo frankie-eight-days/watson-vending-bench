@@ -81,7 +81,7 @@ function parseArgs(args: string[]): {
         i++;
         break;
       case "--provider":
-        if (next === "anthropic" || next === "cerebras") {
+        if (next === "anthropic" || next === "cerebras" || next === "openai") {
           options.simConfig.provider = next;
         }
         i++;
@@ -91,7 +91,7 @@ function parseArgs(args: string[]): {
         i++;
         break;
       case "--supplier-provider":
-        if (next === "anthropic" || next === "cerebras") {
+        if (next === "anthropic" || next === "cerebras" || next === "openai") {
           options.simConfig.supplierProvider = next;
         }
         i++;
@@ -101,7 +101,7 @@ function parseArgs(args: string[]): {
         i++;
         break;
       case "--search-provider":
-        if (next === "anthropic" || next === "cerebras") {
+        if (next === "anthropic" || next === "cerebras" || next === "openai") {
           options.simConfig.searchProvider = next;
         }
         i++;
@@ -181,11 +181,11 @@ function printUsage(): void {
   console.log("Run Options:");
   console.log("  --mode <direct|agent|openclaw>  Execution mode (default: direct)");
   console.log("  --days <number>            Simulation days (default: 365)");
-  console.log("  --provider <anthropic|cerebras>  LLM provider (default: anthropic)");
+  console.log("  --provider <anthropic|cerebras|openai>  LLM provider (default: anthropic)");
   console.log("  --model <string>           LLM model (default: claude-sonnet-4-6)");
-  console.log("  --supplier-provider <anthropic|cerebras>  Supplier LLM provider");
+  console.log("  --supplier-provider <anthropic|cerebras|openai>  Supplier LLM provider");
   console.log("  --supplier-model <string>  Supplier LLM model");
-  console.log("  --search-provider <anthropic|cerebras>    Search-classifier provider");
+  console.log("  --search-provider <anthropic|cerebras|openai>    Search-classifier provider");
   console.log("  --search-model <string>    Search-classifier model");
   console.log("  --checkpoint <number>      Checkpoint every N days (default: 30)");
   console.log("  --log-dir <path>           Log directory (default: logs)");
