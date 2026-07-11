@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "run:test": "tsx src/index.ts test",
     "run:short": "tsx src/index.ts run --days 30",
-    "run:demo": "tsx src/index.ts run --provider openai --model gpt-5.6-luna --days 30 --no-llm-suppliers --event-seed 42",
+    "run:demo": "tsx src/index.ts run --provider openai --model gpt-5.6-luna --days 30 --no-llm-suppliers --event-seed 42 --max-context 8000",
     "run:full": "tsx src/index.ts run --days 365",
     "metric": "tsx scripts/extract-metric.ts",
     "run:openclaw": "tsx src/index.ts run --mode openclaw",

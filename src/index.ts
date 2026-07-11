@@ -162,6 +162,10 @@ function parseArgs(args: string[]): {
       case "--no-events":
         options.simConfig.eventTemperature = 0;
         break;
+      case "--max-context":
+        options.simConfig.maxContextTokens = parseInt(next ?? "69000", 10);
+        i++;
+        break;
       default:
         break;
     }
