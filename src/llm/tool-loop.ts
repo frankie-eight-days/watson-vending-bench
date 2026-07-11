@@ -22,6 +22,185 @@ import {
 } from "./client.js";
 import { trimMessages } from "./context.js";
 
+const MEMORY_KEYS = [
+  "financial_plan",
+  "machine_strategy",
+  "inventory_policy",
+  "active_commitments",
+  "risks",
+  "next_actions",
+] as const;
+
+type MemoryKey = (typeof MEMORY_KEYS)[number];
+
+type KeyValueStore = {
+  get?: (key: string) => unknown;
+  set?: (key: string, value: string) => unknown;
+  read?: (key: string) => unknown;
+  write?: (key: string, value: string) => unknown;
+};
+
+const MEMORY_BRIEFING_MAX_CHARS = 1600;
+const MEMORY_ENTRY_MAX_CHARS = 600;
+const MEMORY_VALUE_MAX_CHARS = 1200;
+
+function getMemoryStore(world: VendingWorld): KeyValueStore | undefined {
+  const candidate = world as unknown as {
+    kv?: unknown;
+    memory?: unknown;
+    state?: { kv?: unknown };
+  };
+
+  for (const store of [candidate.kv, candidate.memory, candidate.state?.kv]) {
+    if (
+      store &&
+      typeof store === "object" &&
+      (typeof (store as KeyValueStore).get === "function" ||
+        typeof (store as KeyValueStore).read === "function")
+    ) {
+      return store as KeyValueStore;
+    }
+  }
+
+  return undefined;
+}
+
+function stringifyMemoryValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value === null || value === undefined) return "";
+
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+async function readMemoryValue(
+  store: KeyValueStore,
+  key: MemoryKey,
+): Promise<string> {
+  const value =
+    typeof store.get === "function"
+      ? await Promise.resolve(store.get(key))
+      : typeof store.read === "function"
+        ? await Promise.resolve(store.read(key))
+        : undefined;
+
+  return stringifyMemoryValue(value);
+}
+
+async function writeMemoryValue(
+  store: KeyValueStore,
+  key: MemoryKey,
+  value: string,
+): Promise<void> {
+  if (typeof store.set === "function") {
+    await Promise.resolve(store.set(key, value));
+  } else if (typeof store.write === "function") {
+    await Promise.resolve(store.write(key, value));
+  }
+}
+
+async function buildMemoryBriefing(world: VendingWorld): Promise<string> {
+  const store = getMemoryStore(world);
+  if (!store) return "";
+
+  try {
+    const entries: string[] = [];
+
+    for (const key of MEMORY_KEYS) {
+      const value = await readMemoryValue(store, key);
+      if (!value) continue;
+
+      const remaining = MEMORY_BRIEFING_MAX_CHARS -
+        entries.join("\n").length;
+      if (remaining <= 0) break;
+
+      const label = key.replace(/_/g, " ");
+      const entry = `${label}: ${value}`;
+      entries.push(entry.slice(0, remaining));
+    }
+
+    if (entries.length === 0) return "";
+
+    return [
+      "Durable operational memory briefing. Treat this as current working context; update plans using tools and current observations.",
+      ...entries,
+    ].join("\n").slice(0, MEMORY_BRIEFING_MAX_CHARS);
+  } catch (error) {
+    console.warn(
+      `  [MEMORY ERROR] Unable to read operational memory: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return "";
+  }
+}
+
+function affectedMemoryKeys(
+  toolName: string,
+  resultOutput: string,
+  dayTransition: boolean,
+): MemoryKey[] {
+  const text = `${toolName} ${resultOutput}`.toLowerCase();
+  const keys = new Set<MemoryKey>();
+
+  if (/\b(cash|money|revenue|profit|cost|budget|price|financial|expense|sale)\b/.test(text)) {
+    keys.add("financial_plan");
+  }
+  if (/\b(machine|location|relocat|upgrade|repair|purchase|buy)\b/.test(text)) {
+    keys.add("machine_strategy");
+  }
+  if (/\b(inventory|stock|restock|product|supply|item|capacity)\b/.test(text)) {
+    keys.add("inventory_policy");
+  }
+  if (/\b(commit|order|contract|reservation|scheduled|pending|delivery)\b/.test(text)) {
+    keys.add("active_commitments");
+  }
+  if (/\b(error|failed|failure|warning|risk|low stock|broken|maintenance|unavailable)\b/.test(text)) {
+    keys.add("risks");
+  }
+  if (
+    dayTransition ||
+    /\b(next action|next step|should|need to|todo|to do|tomorrow)\b/.test(text)
+  ) {
+    keys.add("next_actions");
+  }
+
+  return [...keys];
+}
+
+async function updateOperationalMemory(
+  world: VendingWorld,
+  toolName: string,
+  resultOutput: string,
+  dayTransition: boolean,
+): Promise<void> {
+  const store = getMemoryStore(world);
+  if (!store) return;
+
+  const keys = affectedMemoryKeys(toolName, resultOutput, dayTransition);
+  if (keys.length === 0) return;
+
+  const entry = `${formatDayTime(world.time)} ${toolName}: ${resultOutput}`
+    .replace(/\s+/g, " ")
+    .slice(0, MEMORY_ENTRY_MAX_CHARS);
+
+  try {
+    for (const key of keys) {
+      const existing = await readMemoryValue(store, key);
+      const value = existing
+        ? `${existing}\n${entry}`.slice(-MEMORY_VALUE_MAX_CHARS)
+        : entry;
+
+      await writeMemoryValue(store, key, value);
+    }
+  } catch (error) {
+    console.warn(
+      `  [MEMORY ERROR] Unable to update operational memory: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
 export interface ToolLoopResult {
   /** Whether wait_for_next_day was called */
   dayEnded: boolean;
@@ -60,10 +239,14 @@ export async function runToolLoop(
 
     // Trim messages to fit context window
     const trimmedMessages = trimMessages(messages, config.maxContextTokens);
+    const memoryBriefing = await buildMemoryBriefing(world);
+    const contextualMessages = memoryBriefing
+      ? [{ role: "system" as const, content: memoryBriefing }, ...trimmedMessages]
+      : trimmedMessages;
 
     // Convert to Anthropic format
     const { system, messages: anthropicMessages } =
-      toAnthropicMessages(trimmedMessages);
+      toAnthropicMessages(contextualMessages);
 
     // Call LLM
     let response: ProviderResponse;
@@ -153,6 +336,7 @@ export async function runToolLoop(
       const tool = getToolByName(toolUse.name);
 
       let resultOutput: string;
+      let dayTransition = false;
 
       if (!tool) {
         resultOutput = `Error: unknown tool "${toolUse.name}". Available tools: ${oaiToolDefs.map((t) => t.function.name).join(", ")}`;
@@ -164,6 +348,7 @@ export async function runToolLoop(
 
           // Advance simulated time
           world.time = advanceTime(world.time, tool.timeCost);
+          dayTransition = result.endDay || isDayOver(world.time);
 
           // Log tool execution
           const argsStr = JSON.stringify(toolUse.input);
@@ -184,6 +369,13 @@ export async function runToolLoop(
           console.log(`  [ERROR] ${resultOutput}`);
         }
       }
+
+      await updateOperationalMemory(
+        world,
+        toolUse.name,
+        resultOutput,
+        dayTransition,
+      );
 
       // Add tool result to message history
       messages.push({
